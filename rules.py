@@ -38,6 +38,17 @@ def 공사정보_읽기(경로=공사정보_경로) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+# ---------- 하자대장 읽기·저장 (실제 저장은 db.py) ----------
+def 대장_읽기() -> list[dict]:
+    import db  # 규칙 계산만 쓸 때는 DB 연결이 필요 없도록 필요할 때 불러온다
+    return db.대장_읽기()
+
+
+def 대장_저장(행들: list[dict]) -> int:
+    import db
+    return db.대장_저장(행들)
+
+
 def 보증만료일(준공일, 보증년수) -> date | None:
     """준공일 + 하자보증기간(년). 윤일(2/29) 준공처럼 같은 날이 없으면 None."""
     d = _날짜(준공일)

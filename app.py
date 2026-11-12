@@ -7,11 +7,13 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+import db
 import rules
 
 BASE = Path(__file__).resolve().parent
-대장경로 = BASE / "data" / "하자대장.csv"
 접수함 = BASE / "data" / "접수함"
+대장열 = ["접수번호", "접수일", "원문파일", "위치", "공종", "하자내용", "긴급도", "조치기한",
+       "공사번호", "시공업체", "준공일", "보증만료일", "보증판정", "책임구분", "상태", "비고"]
 AI칸 = ["접수일", "위치", "공종", "하자내용", "긴급도"]
 표열 = ["접수번호", "위치", "공종", "하자내용", "긴급도", "조치기한", "보증판정", "책임구분", "상태", "비고"]
 판정색 = {"보증내": "green", "보증만료": "orange", "확인필요": "red"}
@@ -19,13 +21,16 @@ AI칸 = ["접수일", "위치", "공종", "하자내용", "긴급도"]
 st.set_page_config(page_title="하자보수 접수 처리", page_icon=":material/build:", layout="wide")
 
 
-@st.cache_data
-def 대장읽기(수정시각: float) -> pd.DataFrame:
-    return pd.read_csv(대장경로, dtype=str, encoding="utf-8-sig").fillna("")
+@st.cache_data(ttl="1m")
+def 대장읽기() -> pd.DataFrame:
+    return pd.DataFrame(rules.대장_읽기(), columns=대장열)
 
 
 @st.cache_data
 def 원문읽기(이름: str) -> str:
+    if 이름.startswith(db.접수원문_접두):  # intake.py로 입력한 DB 접수
+        r = db.접수_하나(int(이름[len(db.접수원문_접두):]))
+        return db.접수_원문(r) if r else "(DB에서 접수를 찾지 못했습니다)"
     return (접수함 / 이름).read_text(encoding="utf-8-sig")
 
 
@@ -41,11 +46,14 @@ st.caption(
     "접수 원문이 하자대장이 되기까지: 원문 → :violet-badge[AI] 정리 → :blue-badge[코드] 계산 → 하자대장 → :orange-badge[사람] 확인"
 )
 
-if not 대장경로.exists():
-    st.warning("하자대장.csv가 없습니다. 터미널에서 `python run.py`를 먼저 실행하세요.", icon=":material/info:")
+try:
+    대장 = 대장읽기()
+except Exception as e:  # 연결 정보(비밀번호)는 db.py가 이미 지운 메시지만 나온다
+    st.error(str(e), title="하자대장(DB)을 읽지 못했습니다", icon=":material/error:")
     st.stop()
-
-대장 = 대장읽기(대장경로.stat().st_mtime)
+if 대장.empty:
+    st.warning("하자대장이 비어 있습니다. 터미널에서 `python run.py`를 먼저 실행하세요.", icon=":material/info:")
+    st.stop()
 공사목록 = 공사목록읽기()
 
 # ---------- 요약 ----------
@@ -92,7 +100,12 @@ with c2.container(border=True):
 
         with st.spinner("Claude가 읽는 중..."):
             try:
-                st.session_state.live[행["원문파일"]] = ai.접수정리(str(접수함 / 행["원문파일"]))
+                if 행["원문파일"].startswith(db.접수원문_접두):
+                    결과 = ai.접수정리_텍스트(행["원문파일"], 원문읽기(행["원문파일"]))
+                    결과["접수일"] = 행["접수일"]  # DB 접수는 발견일이 접수일
+                else:
+                    결과 = ai.접수정리(str(접수함 / 행["원문파일"]))
+                st.session_state.live[행["원문파일"]] = 결과
             except Exception as e:
                 st.error(str(e))
     live = st.session_state.live.get(행["원문파일"])
